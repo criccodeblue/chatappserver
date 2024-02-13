@@ -2,10 +2,10 @@ package server
 
 import (
 	"chatappserver/database"
+	"chatappserver/internal/auth"
 	"chatappserver/internal/model"
 	"chatappserver/internal/util"
 	"encoding/json"
-	"fmt"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
@@ -13,14 +13,14 @@ import (
 
 type Server struct {
 	*mux.Router
-	storage *database.PostgresStorage
+	Storage *database.PostgresStorage
 	Port    string
 }
 
 func NewServer(port string, storage *database.PostgresStorage) *Server {
 	s := &Server{
 		Router:  mux.NewRouter(),
-		storage: storage,
+		Storage: storage,
 		Port:    port,
 	}
 
@@ -31,36 +31,24 @@ func NewServer(port string, storage *database.PostgresStorage) *Server {
 
 func (s *Server) routes() {
 	s.HandleFunc("/users", s.GetUsers).Methods("GET")
-	s.HandleFunc("/user/{handle}", s.VerifyAuth(s.GetUserByHandle)).Methods("GET")
+	s.HandleFunc("/user/{handle}", auth.VerifyAuth(s.GetUserByHandle)).Methods("GET")
 	s.HandleFunc("/signup_user", s.SignUpUser).Methods("POST")
 	s.HandleFunc("/login_user", s.LoginUser).Methods("POST")
 	s.HandleFunc("/user", s.SignUpUser).Methods("POST")
 	s.HandleFunc("/", s.Ping).Methods("GET")
 }
 
-func (s *Server) Ping(w http.ResponseWriter, r *http.Request) {
+func (s *Server) Ping(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode("Pong"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) VerifyAuth(endpointFunc func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header["token"] != nil {
-			fmt.Println(r.Header["token"][0])
-			// validate token
-			// if all ok
-			endpointFunc(w, r)
-			// else show error
-		}
-	}
-}
-
-func (s *Server) GetUsers(w http.ResponseWriter, r *http.Request) {
+func (s *Server) GetUsers(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	dbUsers, err := s.storage.GetUsers()
+	dbUsers, err := s.Storage.GetUsers()
 
 	if err != nil {
 		util.ErrorResponse(w, err.Error())
@@ -81,7 +69,7 @@ func (s *Server) GetUserByHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.storage.GetUserByHandle(handle)
+	user, err := s.Storage.GetUserByHandle(handle)
 	if err != nil {
 		util.ErrorResponse(w, err.Error())
 		return
@@ -108,7 +96,7 @@ func (s *Server) SignUpUser(w http.ResponseWriter, r *http.Request) {
 
 	authUser.PasswordHash = hashedPassword
 
-	user, err := s.storage.CreateUser(&authUser)
+	user, err := s.Storage.CreateUser(&authUser)
 	if err != nil {
 		util.ErrorResponse(w, err.Error())
 		return
@@ -125,9 +113,10 @@ func (s *Server) LoginUser(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&authUser); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	hashedPassword, err := s.storage.GetUserPassword(authUser.Handle)
+	hashedPassword, err := s.Storage.GetUserPassword(authUser.Handle)
 	if err != nil {
 		util.ErrorResponse(w, err.Error())
 		return
@@ -137,13 +126,15 @@ func (s *Server) LoginUser(w http.ResponseWriter, r *http.Request) {
 		util.ErrorResponse(w, "Invalid Password")
 		return
 	} else {
-		user, err := s.storage.GetUserByHandle(authUser.Handle)
+		user, err := s.Storage.GetUserByHandle(authUser.Handle)
 		if err != nil {
 			util.ErrorResponse(w, err.Error())
+			return
 		}
 		authToken, err := util.CreateToken(user.ID)
 		if err != nil {
 			util.ErrorResponse(w, err.Error())
+			return
 		}
 		response := model.ApiResponse{
 			Status:  model.StatusOk,

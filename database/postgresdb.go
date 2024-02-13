@@ -44,13 +44,19 @@ func (ps *PostgresStorage) GetUsers() ([]model.User, error) {
 	query := "SELECT id, name, email, handle FROM users"
 
 	rows, err := ps.db.Query(query)
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Fatalln(err.Error())
+		}
+	}(rows)
+
 	if err != nil {
 		log.Fatalln("Error executing query")
 		return nil, err
 	}
 
-	users := []model.User{}
+	var users []model.User
 
 	for rows.Next() {
 		var user model.User

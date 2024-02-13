@@ -1,8 +1,7 @@
 package model
 
 const (
-	StatusOk    = "Ok"
-	StatusError = "Error"
+	StatusOk = "Ok"
 )
 
 type ApiResponse struct {
