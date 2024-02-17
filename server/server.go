@@ -3,11 +3,13 @@ package server
 import (
 	"chatappserver/database"
 	"chatappserver/internal/auth"
+	"chatappserver/internal/dto"
 	"chatappserver/internal/model"
 	"chatappserver/internal/util"
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
+	"log"
 	"net/http"
 )
 
@@ -30,10 +32,16 @@ func NewServer(port string, storage *database.PostgresStorage) *Server {
 }
 
 func (s *Server) routes() {
-	s.HandleFunc("/users", s.GetUsers).Methods("GET")
-	s.HandleFunc("/user/{handle}", auth.VerifyAuth(s.GetUserByHandle)).Methods("GET")
+
+	newAuth, err := auth.NewAuth()
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+
+	s.HandleFunc("/users", newAuth.VerifyAuth(s.GetUsers)).Methods("GET")
+	s.HandleFunc("/user/{handle}", newAuth.VerifyAuth(s.GetUserByHandle)).Methods("GET")
 	s.HandleFunc("/signup_user", s.SignUpUser).Methods("POST")
-	s.HandleFunc("/login_user", s.LoginUser).Methods("POST")
+	s.HandleFunc("/login_user", s.LoginUser(newAuth)).Methods("POST")
 	s.HandleFunc("/user", s.SignUpUser).Methods("POST")
 	s.HandleFunc("/", s.Ping).Methods("GET")
 }
@@ -107,42 +115,44 @@ func (s *Server) SignUpUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) LoginUser(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	var authUser model.AuthUser
+func (s *Server) LoginUser(auth *auth.Auth) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var authUser model.AuthUser
 
-	if err := json.NewDecoder(r.Body).Decode(&authUser); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	hashedPassword, err := s.Storage.GetUserPassword(authUser.Handle)
-	if err != nil {
-		util.ErrorResponse(w, err.Error())
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword(hashedPassword, []byte(authUser.Password)); err != nil {
-		util.ErrorResponse(w, "Invalid Password")
-		return
-	} else {
-		user, err := s.Storage.GetUserByHandle(authUser.Handle)
-		if err != nil {
-			util.ErrorResponse(w, err.Error())
-			return
-		}
-		authToken, err := util.CreateToken(user.ID)
-		if err != nil {
-			util.ErrorResponse(w, err.Error())
-			return
-		}
-		response := model.ApiResponse{
-			Status:  model.StatusOk,
-			Message: "",
-			Data:    authToken,
-		}
-		if err := json.NewEncoder(w).Encode(response); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&authUser); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		hashedPassword, err := s.Storage.GetUserPassword(authUser.Handle)
+		if err != nil {
+			util.ErrorResponse(w, err.Error())
+			return
+		}
+
+		if err := bcrypt.CompareHashAndPassword(hashedPassword, []byte(authUser.Password)); err != nil {
+			util.ErrorResponse(w, "Invalid Password")
+			return
+		} else {
+			user, err := s.Storage.GetUserByHandle(authUser.Handle)
+			if err != nil {
+				util.ErrorResponse(w, err.Error())
+				return
+			}
+			authToken, err := util.CreateToken(user.ID, auth.PrivateKey)
+			if err != nil {
+				util.ErrorResponse(w, err.Error())
+				return
+			}
+			response := model.ApiResponse{
+				Status:  model.StatusOk,
+				Message: "",
+				Data:    dto.TokenResponseDto{Token: authToken},
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 		}
 	}
 }
